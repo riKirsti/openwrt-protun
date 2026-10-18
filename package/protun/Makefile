@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=protun
 PKG_VERSION:=3.0.1
-PKG_RELEASE:=6
+PKG_RELEASE:=7
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/ProtonVPN/protun/tar.gz/v$(PKG_VERSION)?
@@ -65,7 +65,7 @@ define Build/Compile
 		$(PROTUN_PROFILE_VARS) \
 		TARGET_AR="$(TARGET_AR)" \
 		$(PROTUN_RUST_VARS) \
-		$(PROTUN_CARGO) build -v --locked --lib \
+		$(PROTUN_CARGO) rustc -v --locked --lib --crate-type cdylib \
 			--profile $(CARGO_PKG_PROFILE) \
 			--features linux \
 			--target-dir $(PROTUN_CARGO_TARGET_DIR) \
