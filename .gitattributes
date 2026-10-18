@@ -1,4 +1,5 @@
 *.sh text eol=lf
 *.yml text eol=lf
+*.patch text eol=lf whitespace=-blank-at-eol
 Makefile text eol=lf
 Cargo.lock text eol=lf

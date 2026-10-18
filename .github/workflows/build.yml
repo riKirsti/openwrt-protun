@@ -19,6 +19,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     strategy:
       matrix:
         include:
@@ -28,6 +30,7 @@ jobs:
       SDK_IMAGE: ghcr.io/openwrt/sdk:${{ matrix.sdk_arch }}
       PACKAGES_COMMIT: 093d551675b1119a06ef224d419905e8d6b2af1a
       RUST_VERSION: 1.96.0
+      PROTUN_FAST_BUILD: '1'
 
     steps:
       - name: Checkout Repository
@@ -39,30 +42,35 @@ jobs:
         id: rust
         shell: bash
         run: |
+          started=$SECONDS
           rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
           rustup target add aarch64-unknown-linux-musl --toolchain "$RUST_VERSION"
           toolchain_dir=$(rustc +"$RUST_VERSION" --print sysroot)
           echo "toolchain-dir=$toolchain_dir" >> "$GITHUB_OUTPUT"
+          echo "Rust setup: $((SECONDS - started))s" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Resolve the OpenWrt 25.12.5 SDK image
         id: sdk
         shell: bash
         run: |
+          started=$SECONDS
           docker pull "$SDK_IMAGE"
           image_id=$(docker image inspect --format '{{.Id}}' "$SDK_IMAGE")
           echo "image-id=${image_id#sha256:}" >> "$GITHUB_OUTPUT"
           image_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$SDK_IMAGE")
           echo "image-ref=$image_ref" >> "$GITHUB_OUTPUT"
+          echo "SDK image setup: $((SECONDS - started))s" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Cache SDK downloads and Rust build files
-        uses: actions/cache@v6
+      - name: Restore SDK downloads and Rust build files
+        id: cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ runner.temp }}/protun-cache/downloads
             ${{ runner.temp }}/protun-cache/cargo-target
-          key: protun-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-${{ env.RUST_VERSION }}-${{ hashFiles('package/protun/Makefile', 'package/protun/files/Cargo.lock', '.github/scripts/*', '.github/workflows/build.yml') }}
+          key: protun-v3-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-${{ env.RUST_VERSION }}-fast${{ env.PROTUN_FAST_BUILD }}-${{ hashFiles('package/protun/Makefile', 'package/protun/files/Cargo.lock', 'package/protun/patches/**', '.github/scripts/build-sdk.sh') }}
           restore-keys: |
-            protun-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-${{ env.RUST_VERSION }}-
+            protun-v3-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-${{ env.RUST_VERSION }}-fast${{ env.PROTUN_FAST_BUILD }}-
 
       - name: Enable ARM64 library load checks
         uses: docker/setup-qemu-action@v4
@@ -70,11 +78,18 @@ jobs:
           platforms: arm64
 
       - name: Build and verify Protun with the OpenWrt SDK
+        id: build
         shell: bash
         env:
           RESOLVED_SDK_IMAGE: ${{ steps.sdk.outputs.image-ref }}
           RUST_TOOLCHAIN_DIR: ${{ steps.rust.outputs.toolchain-dir }}
         run: |
+          started=$SECONDS
+          BUILD_JOBS=$(nproc)
+          export BUILD_JOBS
+          echo "Build jobs: $BUILD_JOBS; fast test build: $PROTUN_FAST_BUILD"
+          echo "Build jobs: $BUILD_JOBS; fast test build: $PROTUN_FAST_BUILD" >> "$GITHUB_STEP_SUMMARY"
+          echo "Compilation cache exact hit: ${{ steps.cache.outputs.cache-hit == 'true' }}" >> "$GITHUB_STEP_SUMMARY"
           cache_dir="$RUNNER_TEMP/protun-cache"
           output_dir="$RUNNER_TEMP/protun-apk"
           mkdir -p "$cache_dir/downloads" "$cache_dir/cargo-target" "$output_dir"
@@ -82,8 +97,9 @@ jobs:
           docker run --rm \
             --env PACKAGES_COMMIT \
             --env RUST_VERSION \
+            --env PROTUN_FAST_BUILD \
             --env PROTUN_RUST_ROOT=/opt/rust \
-            --env BUILD_JOBS=2 \
+            --env BUILD_JOBS \
             --env PROTUN_CARGO_TARGET_DIR=/cache/target \
             --mount "type=bind,source=$GITHUB_WORKSPACE/package,target=/feed,readonly" \
             --mount "type=bind,source=$GITHUB_WORKSPACE/.github/scripts,target=/ci,readonly" \
@@ -93,6 +109,7 @@ jobs:
             --mount "type=bind,source=$output_dir,target=/out" \
             --workdir /builder --entrypoint /bin/bash \
             "$RESOLVED_SDK_IMAGE" /ci/build-sdk.sh
+          echo "SDK build and checks: $((SECONDS - started))s" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Restore cache ownership for the runner
         if: always()
@@ -104,9 +121,46 @@ jobs:
             fi
           done
 
-      - name: Upload APK Artifacts
-        uses: actions/upload-artifact@v7
+      - name: Save verified build cache before publishing
+        if: success() && steps.build.outcome == 'success' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
         with:
-          name: openwrt-protun-${{ matrix.arch }}
-          path: ${{ runner.temp }}/protun-apk/protun-*.apk
-          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/protun-cache/downloads
+            ${{ runner.temp }}/protun-cache/cargo-target
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: Checkout the built commit for publishing
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: true
+
+      - name: Commit APK to build folder
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        shell: bash
+        env:
+          APK_DIR: ${{ runner.temp }}/protun-apk
+        run: |
+          shopt -s nullglob
+          packages=("$APK_DIR"/protun-*.apk)
+          if (( ${#packages[@]} != 1 )); then
+            echo 'Expected exactly one Protun APK to publish' >&2
+            exit 1
+          fi
+          mkdir -p build
+          previous_packages=(build/protun-*.apk)
+          if (( ${#previous_packages[@]} )); then
+            rm -- "${previous_packages[@]}"
+          fi
+          cp "${packages[0]}" build/
+          git add -- build/
+          if git diff --cached --quiet -- build/; then
+            echo 'The APK in build/ is already up to date'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Update Protun APK in build/'
+          git push origin HEAD:refs/heads/main
