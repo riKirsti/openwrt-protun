@@ -14,17 +14,23 @@ jobs:
         include:
           - arch: aarch64_cortex-a53
             sdk_arch: aarch64_cortex-a53
-          - arch: x86_64
-            sdk_arch: x86_64
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
+      - name: Log in to GHCR (optional, helps if image is private)
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build OpenWrt APK using SDK & Native Rust
         uses: openwrt/gh-action-sdk@main
         env:
-          ARCH: ${{ matrix.sdk_arch }}-25.12
+          ARCH: ${{ matrix.sdk_arch }}
+          CONTAINER: ghcr.io/openwrt/sdk
           PACKAGES: protun
 
       - name: Upload APK Artifacts
