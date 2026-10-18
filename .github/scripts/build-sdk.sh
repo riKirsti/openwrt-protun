@@ -74,9 +74,24 @@ if (( ${#compilers[@]} != 1 )); then
     echo 'Expected one ARM64 SDK compiler' >&2
     exit 1
 fi
-sysroot="$("${compilers[0]}" -print-sysroot)"
-loader="$sysroot/lib/ld-musl-aarch64.so.1"
-test -x "$loader"
+# OpenWrt's relocatable SDK keeps libc beside the toolchain, not necessarily
+# under GCC's reported sysroot. Make exports these staging paths only to its
+# own children; the standalone check compiler needs them explicitly as well.
+toolchain_dir="$(realpath "$(dirname "${compilers[0]}")/..")"
+target_dirs=(staging_dir/target-*)
+if (( ${#target_dirs[@]} != 1 )) || [[ ! -d ${target_dirs[0]} ]]; then
+    echo 'Expected one SDK target staging directory' >&2
+    exit 1
+fi
+STAGING_DIR="$(realpath "${target_dirs[0]}")"
+export STAGING_DIR
+export STAGING_DIR_HOST=/builder/staging_dir/host
+loader="$toolchain_dir/lib/ld-musl-aarch64.so.1"
+if [[ ! -x $loader ]]; then
+    echo "Missing executable SDK musl loader: $loader" >&2
+    exit 1
+fi
+echo "Checking library loading with SDK musl: $loader"
 "${compilers[0]}" -Wall -Wextra -Werror -O2 /ci/load-library.c -o /tmp/protun-load-test -ldl
 
 profile=release
@@ -84,12 +99,18 @@ if grep -qx 'CONFIG_DEBUG=y' .config; then
     profile=debug
 fi
 unpacked="$PROTUN_CARGO_TARGET_DIR/aarch64-unknown-linux-musl/$profile/libprotun.so"
-test -s "$unpacked"
+if [[ ! -s $unpacked ]]; then
+    echo "Missing built Protun library: $unpacked" >&2
+    exit 1
+fi
 
 # Check the built library's dependencies independently of SDK package scanning.
 readelf="${compilers[0]%-gcc}-readelf"
 needed="$("$readelf" -d "$unpacked" | sed -n 's/.*(NEEDED).*\[\([^]]*\)\].*/\1/p')"
-test -n "$needed"
+if [[ -z $needed ]]; then
+    echo "No shared-library dependencies found in: $unpacked" >&2
+    exit 1
+fi
 while IFS= read -r dependency; do
     case "$dependency" in
         libc.so|libgcc_s.so.1) ;;
@@ -106,7 +127,7 @@ if (( ${#staged[@]} != 1 )); then
     exit 1
 fi
 for library in "$unpacked" "${staged[0]}"; do
-    "$loader" --library-path "$sysroot/lib:$sysroot/usr/lib" \
+    "$loader" --library-path "$toolchain_dir/lib:$STAGING_DIR/lib:$STAGING_DIR/usr/lib" \
         /tmp/protun-load-test "$(realpath "$library")"
 done
 
