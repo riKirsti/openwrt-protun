@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=protun
 PKG_VERSION:=3.0.1
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/ProtonVPN/protun/tar.gz/v$(PKG_VERSION)?
@@ -10,7 +10,10 @@ PKG_HASH:=6204027ab912c33aacc7ae9535d1f622154e9d85076785824f6e05baf9514d0a
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE
-PKG_BUILD_DEPENDS:=rust/host
+# Normal SDK builds use OpenWrt Rust; CI supplies a prebuilt toolchain instead.
+ifeq ($(strip $(PROTUN_RUST_ROOT)),)
+  PKG_BUILD_DEPENDS:=rust/host
+endif
 PKG_BUILD_PARALLEL:=1
 
 UPX_VERSION:=5.2.1
@@ -18,6 +21,14 @@ UPX_FILE:=upx-$(UPX_VERSION)-amd64_linux.tar.xz
 
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
+
+PROTUN_CARGO:=cargo
+ifneq ($(strip $(PROTUN_RUST_ROOT)),)
+  PROTUN_CARGO:=$(PROTUN_RUST_ROOT)/bin/cargo
+  PROTUN_RUST_VARS:=RUSTC="$(PROTUN_RUST_ROOT)/bin/rustc"
+  # Use the SDK's musl and startup objects, rather than Rust's bundled copies.
+  CARGO_RUSTFLAGS+=-Clink-self-contained=no
+endif
 
 # Strip before UPX; do not strip the packed library again during packaging.
 RSTRIP:=:
@@ -53,7 +64,8 @@ define Build/Compile
 	+cd $(PKG_BUILD_DIR) && \
 		$(CARGO_PKG_VARS) \
 		TARGET_AR="$(TARGET_AR)" \
-		cargo build -v --locked --lib \
+		$(PROTUN_RUST_VARS) \
+		$(PROTUN_CARGO) build -v --locked --lib \
 			--profile $(CARGO_PKG_PROFILE) \
 			--features linux \
 			--target-dir $(PROTUN_CARGO_TARGET_DIR) \

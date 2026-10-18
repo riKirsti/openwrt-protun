@@ -27,12 +27,22 @@ jobs:
     env:
       SDK_IMAGE: ghcr.io/openwrt/sdk:${{ matrix.sdk_arch }}
       PACKAGES_COMMIT: 093d551675b1119a06ef224d419905e8d6b2af1a
+      RUST_VERSION: 1.96.0
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Install prebuilt Rust and the ARM64 musl standard library
+        id: rust
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+          rustup target add aarch64-unknown-linux-musl --toolchain "$RUST_VERSION"
+          toolchain_dir=$(rustc +"$RUST_VERSION" --print sysroot)
+          echo "toolchain-dir=$toolchain_dir" >> "$GITHUB_OUTPUT"
 
       - name: Resolve the OpenWrt 25.12.5 SDK image
         id: sdk
@@ -50,9 +60,9 @@ jobs:
           path: |
             ${{ runner.temp }}/protun-cache/downloads
             ${{ runner.temp }}/protun-cache/cargo-target
-          key: protun-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-${{ hashFiles('package/protun/Makefile', 'package/protun/files/Cargo.lock', '.github/scripts/*', '.github/workflows/build.yml') }}
+          key: protun-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-${{ env.RUST_VERSION }}-${{ hashFiles('package/protun/Makefile', 'package/protun/files/Cargo.lock', '.github/scripts/*', '.github/workflows/build.yml') }}
           restore-keys: |
-            protun-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-
+            protun-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-${{ env.RUST_VERSION }}-
 
       - name: Enable ARM64 library load checks
         uses: docker/setup-qemu-action@v4
@@ -63,6 +73,7 @@ jobs:
         shell: bash
         env:
           RESOLVED_SDK_IMAGE: ${{ steps.sdk.outputs.image-ref }}
+          RUST_TOOLCHAIN_DIR: ${{ steps.rust.outputs.toolchain-dir }}
         run: |
           cache_dir="$RUNNER_TEMP/protun-cache"
           output_dir="$RUNNER_TEMP/protun-apk"
@@ -70,10 +81,13 @@ jobs:
           sudo chown -R 1000:1000 "$cache_dir" "$output_dir"
           docker run --rm \
             --env PACKAGES_COMMIT \
+            --env RUST_VERSION \
+            --env PROTUN_RUST_ROOT=/opt/rust \
             --env BUILD_JOBS=2 \
             --env PROTUN_CARGO_TARGET_DIR=/cache/target \
             --mount "type=bind,source=$GITHUB_WORKSPACE/package,target=/feed,readonly" \
             --mount "type=bind,source=$GITHUB_WORKSPACE/.github/scripts,target=/ci,readonly" \
+            --mount "type=bind,source=$RUST_TOOLCHAIN_DIR,target=/opt/rust,readonly" \
             --mount "type=bind,source=$cache_dir/downloads,target=/builder/dl" \
             --mount "type=bind,source=$cache_dir/cargo-target,target=/cache/target" \
             --mount "type=bind,source=$output_dir,target=/out" \

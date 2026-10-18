@@ -4,6 +4,8 @@ shopt -s nullglob
 
 : "${PACKAGES_COMMIT:?Missing packages feed commit}"
 : "${PROTUN_CARGO_TARGET_DIR:?Missing Cargo cache directory}"
+: "${PROTUN_RUST_ROOT:?Missing prebuilt Rust toolchain}"
+: "${RUST_VERSION:?Missing expected Rust version}"
 : "${BUILD_JOBS:=2}"
 
 if [[ ! $PACKAGES_COMMIT =~ ^[0-9a-f]{40}$ ]]; then
@@ -21,30 +23,50 @@ fi
 
 cd /builder
 
+# Call the mounted compiler directly: runner rustup shims are not in the SDK.
+export PATH="$PROTUN_RUST_ROOT/bin:$PATH"
+"$PROTUN_RUST_ROOT/bin/rustc" --version | grep -F "rustc $RUST_VERSION "
+"$PROTUN_RUST_ROOT/bin/cargo" --version
+target_libdir="$("$PROTUN_RUST_ROOT/bin/rustc" --print target-libdir --target aarch64-unknown-linux-musl)"
+target_std=("$target_libdir"/libstd-*.rlib)
+if (( ${#target_std[@]} != 1 )); then
+    echo 'Missing prebuilt ARM64 musl standard library' >&2
+    exit 1
+fi
+sdk_make=(make "PROTUN_RUST_ROOT=$PROTUN_RUST_ROOT")
+
 # Release images contain the SDK; also handle images with a setup script.
 if [[ ! -f rules.mk ]]; then
     bash ./setup.sh
 fi
 
-# Pin the Rust package and its helpers to the reviewed 25.12 feed revision.
+# Keep the SDK's Rust build flags and linker helpers at the reviewed revision.
 printf 'src-git packages https://github.com/openwrt/packages.git^%s\nsrc-link action /feed\n' \
     "$PACKAGES_COMMIT" > feeds.conf
 ./scripts/feeds update -a
 test "$(git -C feeds/packages rev-parse HEAD)" = "$PACKAGES_COMMIT"
-make defconfig
+"${sdk_make[@]}" defconfig
 ./scripts/feeds install -f -p action protun
 
 sed -i '/^CONFIG_PACKAGE_protun=/d; /^# CONFIG_PACKAGE_protun is not set$/d' .config
 printf '\nCONFIG_PACKAGE_protun=m\n' >> .config
-make defconfig
+"${sdk_make[@]}" defconfig
 if ! grep -Eq '^CONFIG_PACKAGE_protun=[my]$' .config; then
     echo 'Protun was not selected; refusing to report a skipped build as successful' >&2
     exit 1
 fi
 
-make package/protun/download V=s
-make package/protun/check V=s
-make -j "$BUILD_JOBS" package/protun/compile V=s CONFIG_SIGNED_PACKAGES= CONFIG_AUTOREMOVE=
+# Check the evaluated package metadata before allowing an expensive compiler build.
+package_info="$("${sdk_make[@]}" --no-print-directory -s -C package/feeds/action/protun TOPDIR=/builder DUMP=1)"
+grep -qx 'Package: protun' <<< "$package_info"
+if grep -Eq '^Build-Depends[^:]*:.*rust/host' <<< "$package_info"; then
+    echo 'The build still requires compiling Rust/LLVM; refusing to continue' >&2
+    exit 1
+fi
+
+"${sdk_make[@]}" package/protun/download V=s
+"${sdk_make[@]}" package/protun/check V=s
+"${sdk_make[@]}" -j "$BUILD_JOBS" package/protun/compile V=s CONFIG_SIGNED_PACKAGES= CONFIG_AUTOREMOVE=
 
 # Run the libraries using the SDK's ARM64 musl loader and QEMU binfmt support.
 compilers=(staging_dir/toolchain-*/bin/aarch64-openwrt-linux-musl-gcc)
