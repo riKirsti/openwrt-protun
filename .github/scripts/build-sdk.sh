@@ -86,7 +86,7 @@ fi
 unpacked="$PROTUN_CARGO_TARGET_DIR/aarch64-unknown-linux-musl/$profile/libprotun.so"
 test -s "$unpacked"
 
-# Check before UPX, independently of dependency scanning on the packed ELF.
+# Check the built library's dependencies independently of SDK package scanning.
 readelf="${compilers[0]%-gcc}-readelf"
 needed="$("$readelf" -d "$unpacked" | sed -n 's/.*(NEEDED).*\[\([^]]*\)\].*/\1/p')"
 test -n "$needed"
@@ -100,12 +100,12 @@ while IFS= read -r dependency; do
     esac
 done <<< "$needed"
 
-mapfile -t packed < <(find build_dir -type f -path '*/ipkg-*/protun/usr/lib/libprotun.so')
-if (( ${#packed[@]} != 1 )); then
+mapfile -t staged < <(find build_dir -type f -path '*/ipkg-*/protun/usr/lib/libprotun.so')
+if (( ${#staged[@]} != 1 )); then
     echo 'Expected one staged Protun shared library' >&2
     exit 1
 fi
-for library in "$unpacked" "${packed[0]}"; do
+for library in "$unpacked" "${staged[0]}"; do
     "$loader" --library-path "$sysroot/lib:$sysroot/usr/lib" \
         /tmp/protun-load-test "$(realpath "$library")"
 done
