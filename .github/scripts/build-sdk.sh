@@ -25,7 +25,7 @@ preflight() {
     : "${PROTUN_RUST_ROOT:?Missing prebuilt Rust toolchain}"
     : "${RUST_VERSION:?Missing expected Rust version}"
     : "${BUILD_JOBS:=$(nproc)}"
-    : "${PROTUN_FAST_BUILD:=0}"
+    : "${PROTUN_BUILD_MODE:=runtime}"
 
     if [[ ! $PACKAGES_COMMIT =~ ^[0-9a-f]{40}$ ]]; then
         echo 'Invalid packages feed commit' >&2
@@ -35,10 +35,14 @@ preflight() {
         echo 'BUILD_JOBS must be a positive integer' >&2
         exit 1
     fi
-    if [[ ! $PROTUN_FAST_BUILD =~ ^[01]$ ]]; then
-        echo 'PROTUN_FAST_BUILD must be 0 or 1' >&2
-        exit 1
-    fi
+    case "$PROTUN_BUILD_MODE" in
+        runtime) echo 'Protun runtime mode: opt-level=3, LTO=thin, codegen-units=16' ;;
+        fast) echo 'Protun fast mode: opt-level=1, LTO=off, codegen-units=16' ;;
+        *)
+            echo 'PROTUN_BUILD_MODE must be runtime or fast' >&2
+            exit 1
+            ;;
+    esac
     if [[ ${VERSION_PATH:-} != releases/25.12.5 ]]; then
         echo 'Expected the OpenWrt 25.12.5 release SDK' >&2
         exit 1
@@ -54,7 +58,7 @@ preflight() {
         echo 'Missing prebuilt ARM64 musl standard library' >&2
         exit 1
     fi
-    sdk_make=(make "PROTUN_RUST_ROOT=$PROTUN_RUST_ROOT" "PROTUN_FAST_BUILD=$PROTUN_FAST_BUILD")
+    sdk_make=(make "PROTUN_RUST_ROOT=$PROTUN_RUST_ROOT" "PROTUN_BUILD_MODE=$PROTUN_BUILD_MODE")
 }
 
 configure_sdk() {

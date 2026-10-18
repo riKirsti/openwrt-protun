@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=protun
 PKG_VERSION:=3.0.1
-PKG_RELEASE:=5
+PKG_RELEASE:=6
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/ProtonVPN/protun/tar.gz/v$(PKG_VERSION)?
@@ -27,11 +27,15 @@ ifneq ($(strip $(PROTUN_RUST_ROOT)),)
   CARGO_RUSTFLAGS+=-Clink-self-contained=no
 endif
 
-# Test builds trade size/runtime optimization for faster compilation.
+# Runtime builds favor device performance; fast builds shorten test compilation.
 # These assignments must follow CARGO_PKG_VARS in the command below.
-PROTUN_FAST_BUILD?=0
-ifeq ($(PROTUN_FAST_BUILD),1)
+PROTUN_BUILD_MODE?=runtime
+ifeq ($(PROTUN_BUILD_MODE),runtime)
+  PROTUN_PROFILE_VARS:=CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 CARGO_PROFILE_RELEASE_OPT_LEVEL=3
+else ifeq ($(PROTUN_BUILD_MODE),fast)
   PROTUN_PROFILE_VARS:=CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 CARGO_PROFILE_RELEASE_OPT_LEVEL=1
+else
+  $(error PROTUN_BUILD_MODE must be runtime or fast)
 endif
 
 CARGO_OUTPUT_DIR:=$(if $(filter dev,$(CARGO_PKG_PROFILE)),debug,$(CARGO_PKG_PROFILE))

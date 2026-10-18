@@ -30,7 +30,7 @@ jobs:
       SDK_IMAGE: ghcr.io/openwrt/sdk:${{ matrix.sdk_arch }}
       PACKAGES_COMMIT: 093d551675b1119a06ef224d419905e8d6b2af1a
       RUST_VERSION: 1.96.0
-      PROTUN_FAST_BUILD: '1'
+      PROTUN_BUILD_MODE: runtime
 
     steps:
       - name: Checkout Repository
@@ -68,9 +68,9 @@ jobs:
           path: |
             ${{ runner.temp }}/protun-cache/downloads
             ${{ runner.temp }}/protun-cache/cargo-target
-          key: protun-v3-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-${{ env.RUST_VERSION }}-fast${{ env.PROTUN_FAST_BUILD }}-${{ hashFiles('package/protun/Makefile', 'package/protun/files/Cargo.lock', 'package/protun/patches/**', '.github/scripts/build-sdk.sh') }}
+          key: protun-v3-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-${{ env.RUST_VERSION }}-mode${{ env.PROTUN_BUILD_MODE }}-${{ hashFiles('package/protun/Makefile', 'package/protun/files/Cargo.lock', 'package/protun/patches/**', '.github/scripts/build-sdk.sh') }}
           restore-keys: |
-            protun-v3-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-${{ env.RUST_VERSION }}-fast${{ env.PROTUN_FAST_BUILD }}-
+            protun-v3-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-${{ env.RUST_VERSION }}-mode${{ env.PROTUN_BUILD_MODE }}-
 
       - name: Enable ARM64 library load checks
         uses: docker/setup-qemu-action@v4
@@ -87,8 +87,8 @@ jobs:
           started=$SECONDS
           BUILD_JOBS=$(nproc)
           export BUILD_JOBS
-          echo "Build jobs: $BUILD_JOBS; fast test build: $PROTUN_FAST_BUILD"
-          echo "Build jobs: $BUILD_JOBS; fast test build: $PROTUN_FAST_BUILD" >> "$GITHUB_STEP_SUMMARY"
+          echo "Build jobs: $BUILD_JOBS; build mode: $PROTUN_BUILD_MODE"
+          echo "Build jobs: $BUILD_JOBS; build mode: $PROTUN_BUILD_MODE" >> "$GITHUB_STEP_SUMMARY"
           echo "Compilation cache exact hit: ${{ steps.cache.outputs.cache-hit == 'true' }}" >> "$GITHUB_STEP_SUMMARY"
           cache_dir="$RUNNER_TEMP/protun-cache"
           output_dir="$RUNNER_TEMP/protun-apk"
@@ -97,7 +97,7 @@ jobs:
           docker run --rm \
             --env PACKAGES_COMMIT \
             --env RUST_VERSION \
-            --env PROTUN_FAST_BUILD \
+            --env PROTUN_BUILD_MODE \
             --env PROTUN_RUST_ROOT=/opt/rust \
             --env BUILD_JOBS \
             --env PROTUN_CARGO_TARGET_DIR=/cache/target \
