@@ -2,9 +2,19 @@ name: Build OpenWrt Protun Native APK
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -13,18 +23,13 @@ jobs:
       matrix:
         include:
           - arch: aarch64_cortex-a53
-            sdk_arch: aarch64_cortex-a53
+            sdk_arch: aarch64_cortex-a53-25.12.5
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
-
-      - name: Log in to GHCR (optional, helps if image is private)
-        uses: docker/login-action@v2
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
       - name: Build OpenWrt APK using SDK & Native Rust
         uses: openwrt/gh-action-sdk@main
@@ -37,4 +42,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: openwrt-protun-${{ matrix.arch }}
-          path: bin/packages/**/*.apk
+          path: bin/packages/**/protun-*.apk
+          if-no-files-found: error

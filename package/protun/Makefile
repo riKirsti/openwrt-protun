@@ -19,7 +19,7 @@ UPX_FILE:=upx-$(UPX_VERSION)-amd64_linux.tar.xz
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 
-# Strip before compression; the packaging stage must not strip a packed ELF.
+# Strip before UPX; do not strip the packed library again during packaging.
 RSTRIP:=:
 CARGO_OUTPUT_DIR:=$(if $(filter dev,$(CARGO_PKG_PROFILE)),debug,$(CARGO_PKG_PROFILE))
 
@@ -35,21 +35,24 @@ define Package/protun
   CATEGORY:=Network
   TITLE:=Proton VPN core library
   URL:=https://github.com/ProtonVPN/protun
-  DEPENDS:=$(RUST_ARCH_DEPENDS) +libgcc +libopenssl
+  DEPENDS:=$(RUST_ARCH_DEPENDS) +libgcc
 endef
 
 define Package/protun/description
-  Proton VPN core shared library for Linux.
+  Proton VPN core shared library for Linux, with UPX 5.2.1 compression.
   Upstream provides libprotun.so, not a standalone protun VPN command.
 endef
 
-# Upstream does not ship Cargo.lock. Build only the library, rather than
-# cargo install's uniffi-bindgen development tool.
+define Build/Prepare
+	$(call Build/Prepare/Default)
+	$(CP) ./files/Cargo.lock $(PKG_BUILD_DIR)/Cargo.lock
+endef
+
 define Build/Compile
-	cd $(PKG_BUILD_DIR) && \
+	+cd $(PKG_BUILD_DIR) && \
 		$(CARGO_PKG_VARS) \
 		TARGET_AR="$(TARGET_AR)" \
-		cargo build -v --lib \
+		cargo build -v --locked --lib \
 			--profile $(CARGO_PKG_PROFILE) \
 			--features linux \
 			--target-dir $(PKG_BUILD_DIR)/target \
@@ -60,6 +63,7 @@ define Package/protun/install
 	$(INSTALL_DIR) $(1)/usr/lib
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/target/$(RUSTC_TARGET_ARCH)/$(CARGO_OUTPUT_DIR)/libprotun.so $(1)/usr/lib/
 	$(TARGET_CROSS)strip --strip-unneeded $(1)/usr/lib/libprotun.so
+
 	mkdir -p $(PKG_BUILD_DIR)/upx-bin
 	tar -xJf $(DL_DIR)/$(UPX_FILE) -C $(PKG_BUILD_DIR)/upx-bin --strip-components=1
 	cp $(1)/usr/lib/libprotun.so $(PKG_BUILD_DIR)/libprotun-packed.so
