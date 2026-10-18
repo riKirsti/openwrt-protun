@@ -24,6 +24,9 @@ jobs:
         include:
           - arch: aarch64_cortex-a53
             sdk_arch: aarch64_cortex-a53-25.12.5
+    env:
+      SDK_IMAGE: ghcr.io/openwrt/sdk:${{ matrix.sdk_arch }}
+      PACKAGES_COMMIT: 093d551675b1119a06ef224d419905e8d6b2af1a
 
     steps:
       - name: Checkout Repository
@@ -31,16 +34,65 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build OpenWrt APK using SDK & Native Rust
-        uses: openwrt/gh-action-sdk@main
+      - name: Resolve the OpenWrt 25.12.5 SDK image
+        id: sdk
+        shell: bash
+        run: |
+          docker pull "$SDK_IMAGE"
+          image_id=$(docker image inspect --format '{{.Id}}' "$SDK_IMAGE")
+          echo "image-id=${image_id#sha256:}" >> "$GITHUB_OUTPUT"
+          image_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$SDK_IMAGE")
+          echo "image-ref=$image_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Cache SDK downloads and Rust build files
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ runner.temp }}/protun-cache/downloads
+            ${{ runner.temp }}/protun-cache/cargo-target
+          key: protun-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-${{ hashFiles('package/protun/Makefile', 'package/protun/files/Cargo.lock', '.github/scripts/*', '.github/workflows/build.yml') }}
+          restore-keys: |
+            protun-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk_arch }}-${{ steps.sdk.outputs.image-id }}-${{ env.PACKAGES_COMMIT }}-
+
+      - name: Enable ARM64 library load checks
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - name: Build and verify Protun with the OpenWrt SDK
+        shell: bash
         env:
-          ARCH: ${{ matrix.sdk_arch }}
-          CONTAINER: ghcr.io/openwrt/sdk
-          PACKAGES: protun
+          RESOLVED_SDK_IMAGE: ${{ steps.sdk.outputs.image-ref }}
+        run: |
+          cache_dir="$RUNNER_TEMP/protun-cache"
+          output_dir="$RUNNER_TEMP/protun-apk"
+          mkdir -p "$cache_dir/downloads" "$cache_dir/cargo-target" "$output_dir"
+          sudo chown -R 1000:1000 "$cache_dir" "$output_dir"
+          docker run --rm \
+            --env PACKAGES_COMMIT \
+            --env BUILD_JOBS=2 \
+            --env PROTUN_CARGO_TARGET_DIR=/cache/target \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/package,target=/feed,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/.github/scripts,target=/ci,readonly" \
+            --mount "type=bind,source=$cache_dir/downloads,target=/builder/dl" \
+            --mount "type=bind,source=$cache_dir/cargo-target,target=/cache/target" \
+            --mount "type=bind,source=$output_dir,target=/out" \
+            --workdir /builder --entrypoint /bin/bash \
+            "$RESOLVED_SDK_IMAGE" /ci/build-sdk.sh
+
+      - name: Restore cache ownership for the runner
+        if: always()
+        shell: bash
+        run: |
+          for directory in "$RUNNER_TEMP/protun-cache" "$RUNNER_TEMP/protun-apk"; do
+            if [ -d "$directory" ]; then
+              sudo chown -R "$(id -u):$(id -g)" "$directory"
+            fi
+          done
 
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v7
         with:
           name: openwrt-protun-${{ matrix.arch }}
-          path: bin/packages/**/protun-*.apk
+          path: ${{ runner.temp }}/protun-apk/protun-*.apk
           if-no-files-found: error

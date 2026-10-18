@@ -22,6 +22,7 @@ include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 # Strip before UPX; do not strip the packed library again during packaging.
 RSTRIP:=:
 CARGO_OUTPUT_DIR:=$(if $(filter dev,$(CARGO_PKG_PROFILE)),debug,$(CARGO_PKG_PROFILE))
+PROTUN_CARGO_TARGET_DIR?=$(PKG_BUILD_DIR)/target
 
 define Download/upx
   FILE:=$(UPX_FILE)
@@ -55,25 +56,19 @@ define Build/Compile
 		cargo build -v --locked --lib \
 			--profile $(CARGO_PKG_PROFILE) \
 			--features linux \
-			--target-dir $(PKG_BUILD_DIR)/target \
+			--target-dir $(PROTUN_CARGO_TARGET_DIR) \
 			$(if $(filter --jobserver%,$(PKG_JOBS)),,-j1)
 endef
 
 define Package/protun/install
 	$(INSTALL_DIR) $(1)/usr/lib
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/target/$(RUSTC_TARGET_ARCH)/$(CARGO_OUTPUT_DIR)/libprotun.so $(1)/usr/lib/
+	$(INSTALL_BIN) $(PROTUN_CARGO_TARGET_DIR)/$(RUSTC_TARGET_ARCH)/$(CARGO_OUTPUT_DIR)/libprotun.so $(1)/usr/lib/
 	$(TARGET_CROSS)strip --strip-unneeded $(1)/usr/lib/libprotun.so
 
 	mkdir -p $(PKG_BUILD_DIR)/upx-bin
 	tar -xJf $(DL_DIR)/$(UPX_FILE) -C $(PKG_BUILD_DIR)/upx-bin --strip-components=1
-	cp $(1)/usr/lib/libprotun.so $(PKG_BUILD_DIR)/libprotun-packed.so
-	if $(PKG_BUILD_DIR)/upx-bin/upx --ultra --best --force $(PKG_BUILD_DIR)/libprotun-packed.so; then \
-		$(PKG_BUILD_DIR)/upx-bin/upx -t $(PKG_BUILD_DIR)/libprotun-packed.so && \
-		mv $(PKG_BUILD_DIR)/libprotun-packed.so $(1)/usr/lib/libprotun.so; \
-	else \
-		echo "WARNING: UPX could not compress libprotun.so; keeping the stripped library." >&2; \
-		rm -f $(PKG_BUILD_DIR)/libprotun-packed.so; \
-	fi
+	$(PKG_BUILD_DIR)/upx-bin/upx --ultra --best --force $(1)/usr/lib/libprotun.so
+	$(PKG_BUILD_DIR)/upx-bin/upx -t $(1)/usr/lib/libprotun.so
 endef
 
 $(eval $(call BuildPackage,protun))

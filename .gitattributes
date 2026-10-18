@@ -1,0 +1,4 @@
+*.sh text eol=lf
+*.yml text eol=lf
+Makefile text eol=lf
+Cargo.lock text eol=lf
