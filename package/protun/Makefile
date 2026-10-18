@@ -79,7 +79,7 @@ define Package/protun/install
 
 	mkdir -p $(PKG_BUILD_DIR)/upx-bin
 	tar -xJf $(DL_DIR)/$(UPX_FILE) -C $(PKG_BUILD_DIR)/upx-bin --strip-components=1
-	$(PKG_BUILD_DIR)/upx-bin/upx --ultra --best --force $(1)/usr/lib/libprotun.so
+	$(PKG_BUILD_DIR)/upx-bin/upx --best --force $(1)/usr/lib/libprotun.so
 	$(PKG_BUILD_DIR)/upx-bin/upx -t $(1)/usr/lib/libprotun.so
 endef
 
